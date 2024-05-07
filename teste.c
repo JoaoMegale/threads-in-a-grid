@@ -18,10 +18,15 @@ typedef struct {
     Position *positions;
 } ThreadData;
 
+typedef struct {
+    int group_id;  // Grupo atual na célula, -1 se vazia
+    pthread_cond_t cond;  // Variável de condição para controle de acesso
+} Cell;
+
 int N, n_threads;
 ThreadData threads[MAX_N];
 pthread_mutex_t board_mutexes[MAX_N][MAX_N];
-pthread_cond_t board_conds[MAX_N][MAX_N];
+Cell board[MAX_N][MAX_N];
 
 void passa_tempo(int tid, int x, int y, int decimos) {
     struct timespec zzz, agora;
@@ -51,35 +56,41 @@ void passa_tempo(int tid, int x, int y, int decimos) {
 
 void *thread_function(void *arg) {
     ThreadData *data = (ThreadData *)arg;
-    int current_x, current_y;
+    int current_x = data->positions[0].x;
+    int current_y = data->positions[0].y;
 
-    // Start at the first position
-    current_x = data->positions[0].x;
-    current_y = data->positions[0].y;
-
-    pthread_mutex_lock(&board_mutexes[current_x][current_y]);
-    passa_tempo(data->id, current_x, current_y, data->positions[0].time);
-    pthread_mutex_unlock(&board_mutexes[current_x][current_y]);
-
-    for (int i = 1; i < data->num_positions; i++) {
+    for (int i = 0; i < data->num_positions; i++) {
         int next_x = data->positions[i].x;
         int next_y = data->positions[i].y;
 
-        // Try to move to the next position
-        while (1) {
-            pthread_mutex_lock(&board_mutexes[next_x][next_y]);
-            // Check conditions to enter the next position
-            // For simplicity, assume condition is met
-            break;
+        pthread_mutex_lock(&board_mutexes[next_x][next_y]);
+
+        // Espera até que a célula esteja livre ou ocupada por um grupo diferente
+        while (board[next_x][next_y].group_id != -1 && board[next_x][next_y].group_id == data->group_id) {
+            pthread_cond_wait(&board[next_x][next_y].cond, &board_mutexes[next_x][next_y]);
         }
 
-        // Move to the next position
-        pthread_mutex_unlock(&board_mutexes[current_x][current_y]);
-        passa_tempo(data->id, next_x, next_y, data->positions[i].time);
+        // Movimentação para a célula
+        if (i > 0) {
+            pthread_mutex_lock(&board_mutexes[current_x][current_y]);
+            board[current_x][current_y].group_id = -1;  // Libera a célula anterior
+            pthread_cond_broadcast(&board[current_x][current_y].cond);  // Notifica outras threads
+            pthread_mutex_unlock(&board_mutexes[current_x][current_y]);
+        }
+
+        board[next_x][next_y].group_id = data->group_id;  // Ocupa a nova célula
+        pthread_mutex_unlock(&board_mutexes[next_x][next_y]);
+        
         current_x = next_x;
         current_y = next_y;
-        pthread_mutex_unlock(&board_mutexes[next_x][next_y]);
+        passa_tempo(data->id, current_x, current_y, data->positions[i].time);
     }
+
+    // Finalização na última posição
+    pthread_mutex_lock(&board_mutexes[current_x][current_y]);
+    board[current_x][current_y].group_id = -1;
+    pthread_cond_broadcast(&board[current_x][current_y].cond);
+    pthread_mutex_unlock(&board_mutexes[current_x][current_y]);
 
     return NULL;
 }
@@ -96,6 +107,9 @@ int main() {
             scanf("%d %d %d", &threads[i].positions[j].x, &threads[i].positions[j].y, &threads[i].positions[j].time);
         }
 
+    }
+
+    for (int i = 0; i < n_threads; i++) {
         pthread_create(&thread_ids[i], NULL, thread_function, &threads[i]);
     }
 
