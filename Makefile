@@ -1,13 +1,14 @@
 CC=gcc
-CFLAGS=-Wall -g
+CFLAGS=-Wall -g -pthread
 
-all: teste
+all: build
 
-teste: teste.o
-	$(CC) $(CFLAGS) teste.o -o teste
+build: main.o
+	$(CC) $(CFLAGS) main.o -o ex1
 
-teste.o: teste.c
-	$(CC) $(CFLAGS) -c teste.c
+main.o: main.c
+	$(CC) $(CFLAGS) -c main.c
 
 clean:
-	rm -f *.o teste
+	rm -f *.o ex1
+
